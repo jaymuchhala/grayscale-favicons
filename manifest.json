@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Grayscale Favicons",
+  "version": "1.6",
+  "description": "Desaturate tab favicons with intensity and lighten-darks sliders.",
+  "permissions": ["storage", "scripting", "declarativeNetRequest"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    { "matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "run_at": "document_idle" }
+  ],
+  "action": { "default_popup": "popup.html", "default_title": "Favicon color filter" }
+}

@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light dark; }
+  body { width: 260px; margin: 0; padding: 14px 16px 16px; font: 13px -apple-system, system-ui, sans-serif; }
+  h1 { font-size: 13px; margin: 0 0 10px; font-weight: 600; }
+  .row { display: flex; justify-content: space-between; margin-bottom: 2px; }
+  input[type=range] { width: 100%; margin: 4px 0 12px; }
+  .swatches { display: flex; gap: 8px; justify-content: center; }
+  .swatches i { width: 22px; height: 22px; border-radius: 50%; display: block; }
+  small { display: block; margin-top: 10px; opacity: .6; text-align: center; }
+</style>
+</head>
+<body>
+  <h1>Favicon color filter</h1>
+  <div class="row"><span>Grayscale</span><span id="val">100%</span></div>
+  <input id="slider" type="range" min="0" max="100" step="1" value="100">
+  <div class="row"><span>Lighten darks</span><span id="lval">50%</span></div>
+  <input id="lslider" type="range" min="0" max="100" step="1" value="50">
+  <div class="swatches" id="sw">
+    <i id="blk" style="background:#000"></i><i style="background:#ef4444"></i><i style="background:#f59e0b"></i>
+    <i style="background:#22c55e"></i><i style="background:#3b82f6"></i><i style="background:#a855f7"></i>
+  </div>
+  <small>Grayscale 0% = original colors<br><span id="ver"></span></small>
+  <script src="popup.js"></script>
+</body>
+</html>

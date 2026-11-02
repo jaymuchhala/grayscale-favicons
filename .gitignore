@@ -1,0 +1,9 @@
+# Personal data: backups
+*backup*.json
+# Changes on every edit (dev auto-reload stamp)
+build.txt
+# Store and release zips
+dist/
+# Local tooling
+.claude/
+.DS_Store
