@@ -146,6 +146,7 @@
   // Some sites' CSP forbids data: images (even for the favicon). Detect that,
   // put the site's own icon back, and stop trying on this page.
   document.addEventListener('securitypolicyviolation', e => {
+    if (e.disposition !== 'enforce') return; // report-only policies (YouTube) don't block anything
     if (!ours || !String(e.violatedDirective).startsWith('img-src')) return;
     if (e.blockedURI !== 'data' && !String(e.blockedURI).startsWith('data:')) return;
     blocked = true;
