@@ -36,7 +36,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 // Pages whose CSP forbids data: images can't show the grayscale icon. For those
-// sites a session rule resends the site's own policy with data: added to img-src,
+// sites a saved rule resends the site's own policy with data: added to img-src,
 // so the icon swap works from the next load on. Policies with nonces change on
 // every load and can't be copied, so those sites are left alone.
 const parse = p => p.split(';').map(d => d.trim()).filter(Boolean);
@@ -68,17 +68,17 @@ const ruleIdFor = s => {
 async function syncRule(origin, header) {
   const key = 'rule:' + origin;
   const id = ruleIdFor(origin);
-  const stored = (await chrome.storage.session.get(key))[key];
+  const stored = (await chrome.storage.local.get(key))[key];
   if (!header || /'nonce-/i.test(header)) {
     if (stored) {
-      await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] });
-      await chrome.storage.session.remove(key);
+      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [id] });
+      await chrome.storage.local.remove(key);
     }
     return false; // blocked, nothing to do
   }
   const patched = allowData(header);
   if (stored === patched) return true; // this response already got the patched policy
-  await chrome.declarativeNetRequest.updateSessionRules({
+  await chrome.declarativeNetRequest.updateDynamicRules({
     removeRuleIds: [id],
     addRules: [{
       id,
@@ -87,7 +87,7 @@ async function syncRule(origin, header) {
       condition: { urlFilter: '|' + origin + '/', resourceTypes: ['main_frame', 'sub_frame'] }
     }]
   });
-  await chrome.storage.session.set({ [key]: patched });
+  await chrome.storage.local.set({ [key]: patched });
   return false; // takes effect on the next load
 }
 
