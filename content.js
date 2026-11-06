@@ -155,9 +155,22 @@
     applyFallback();
   });
 
-  chrome.storage.local.get({ intensity: 100, lift: 50 }).then(v => {
+  // Check the page's CSP up front; if it forbids data: images, use the fallback
+  // directly instead of inserting a data: icon and waiting for the violation.
+  const meta = [...document.querySelectorAll('meta[http-equiv]')]
+    .filter(m => m.httpEquiv.toLowerCase() === 'content-security-policy')
+    .map(m => m.content || '');
+  Promise.all([
+    chrome.storage.local.get({ intensity: 100, lift: 50 }),
+    chrome.runtime.sendMessage({ type: 'cspCheck', meta }).catch(() => null)
+  ]).then(([v, csp]) => {
     intensity = v.intensity;
     lift = v.lift;
+    if (csp && csp.blocked) {
+      blocked = true;
+      const links = iconLinks();
+      fbHref = links.length ? pickBest(links).href : new URL('/favicon.ico', location.origin).href;
+    }
     if (intensity > 0) apply();
   });
   chrome.storage.onChanged.addListener((changes, area) => {

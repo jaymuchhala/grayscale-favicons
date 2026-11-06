@@ -35,6 +35,40 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
 });
 
+// Read each page's CSP header before its content script runs, so pages that
+// forbid data: images go straight to the fallback with no CSP error.
+const blocksData = policy => policy.split(',').some(p => {
+  const dirs = new Map();
+  for (const d of p.split(';')) {
+    const [name, ...src] = d.trim().toLowerCase().split(/\s+/);
+    if (name && !dirs.has(name)) dirs.set(name, src);
+  }
+  const src = dirs.get('img-src') || dirs.get('default-src');
+  return !!src && !src.includes('data:');
+});
+
+chrome.webRequest.onHeadersReceived.addListener(d => {
+  if (d.tabId < 0) return;
+  const blocked = (d.responseHeaders || [])
+    .some(h => h.name.toLowerCase() === 'content-security-policy' && blocksData(h.value || ''));
+  chrome.storage.session.set({ ['csp:' + d.tabId + ':' + d.frameId]: blocked });
+}, { urls: ['http://*/*', 'https://*/*'], types: ['main_frame', 'sub_frame'] }, ['responseHeaders']);
+
+chrome.tabs.onRemoved.addListener(tabId => {
+  chrome.storage.session.get(null).then(all => {
+    const keys = Object.keys(all).filter(k => k.startsWith('csp:' + tabId + ':'));
+    if (keys.length) chrome.storage.session.remove(keys);
+  });
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.type !== 'cspCheck') return;
+  const meta = msg.meta || [];
+  const key = 'csp:' + sender.tab?.id + ':' + sender.frameId;
+  chrome.storage.session.get(key).then(v => sendResponse({ blocked: !!v[key] || meta.some(blocksData) }));
+  return true;
+});
+
 // Session-only redirect rules used by the CSP fallback: requests for a site's own
 // icon URL get answered with our grayscale image. No page headers are modified.
 const ruleIdFor = url => {
