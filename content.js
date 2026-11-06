@@ -9,7 +9,6 @@
   let stash = [];          // site <link> nodes we removed (restored at 0%)
   let ours = null;         // our replacement <link>
   let blocked = false;     // the page's CSP refuses our icon
-  let fbHref = null;       // site's own icon URL, used by the redirect fallback
   let moCount = 0;         // re-applies triggered by page mutations
   let timer = null;
   let renderId = 0;
@@ -88,29 +87,8 @@
     watch();
   }
 
-  // Fallback for CSP-restricted pages: keep the site's own (allowed) icon URL
-  // and have the background redirect that request to our grayscale image.
-  async function applyFallback() {
-    if (!fbHref) return;
-    const id = ++renderId;
-    const base = fbHref.split('#')[0];
-    let gray = null;
-    if (intensity > 0) {
-      gray = await toGray(base, intensity / 100);
-      if (id !== renderId || !gray) return;
-    }
-    try {
-      await chrome.runtime.sendMessage({ type: 'iconRule', url: base, dataUrl: gray });
-    } catch (e) { return; }
-    // A new fragment makes Chrome treat it as a new icon URL and re-download it.
-    const link = iconLinks().find(l => l.href.split('#')[0] === base);
-    if (link) link.setAttribute('href', base + '#gray-' + intensity + '-' + lift);
-  }
-
   async function apply() {
-    if (blocked) return applyFallback();
-    if (intensity <= 0) return restore();
-    if (blocked) return;
+    if (blocked || intensity <= 0) return restore();
     const id = ++renderId;
 
     // Pick up whatever icon the site currently declares.
@@ -143,20 +121,18 @@
     watch();
   }
 
-  // Some sites' CSP forbids data: images (even for the favicon). Detect that,
-  // put the site's own icon back, and stop trying on this page.
+  // Backup for a CSP the up-front check missed: put the site's own icon back
+  // and stop trying on this page.
   document.addEventListener('securitypolicyviolation', e => {
     if (e.disposition !== 'enforce') return; // report-only policies (YouTube) don't block anything
     if (!ours || !String(e.violatedDirective).startsWith('img-src')) return;
     if (e.blockedURI !== 'data' && !String(e.blockedURI).startsWith('data:')) return;
     blocked = true;
-    fbHref = originalHref;
     restore();
-    applyFallback();
   });
 
-  // Check the page's CSP up front; if it forbids data: images, use the fallback
-  // directly instead of inserting a data: icon and waiting for the violation.
+  // Check the page's CSP up front; if it forbids data: images, leave the icon
+  // alone instead of inserting a data: icon and causing a CSP error.
   const meta = [...document.querySelectorAll('meta[http-equiv]')]
     .filter(m => m.httpEquiv.toLowerCase() === 'content-security-policy')
     .map(m => m.content || '');
@@ -166,11 +142,7 @@
   ]).then(([v, csp]) => {
     intensity = v.intensity;
     lift = v.lift;
-    if (csp && csp.blocked) {
-      blocked = true;
-      const links = iconLinks();
-      fbHref = links.length ? pickBest(links).href : new URL('/favicon.ico', location.origin).href;
-    }
+    if (csp && csp.blocked) blocked = true;
     if (intensity > 0) apply();
   });
   chrome.storage.onChanged.addListener((changes, area) => {

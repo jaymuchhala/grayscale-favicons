@@ -35,23 +35,72 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
 });
 
-// Read each page's CSP header before its content script runs, so pages that
-// forbid data: images go straight to the fallback with no CSP error.
+// Pages whose CSP forbids data: images can't show the grayscale icon. For those
+// sites a session rule resends the site's own policy with data: added to img-src,
+// so the icon swap works from the next load on. Policies with nonces change on
+// every load and can't be copied, so those sites are left alone.
+const parse = p => p.split(';').map(d => d.trim()).filter(Boolean);
+const dirName = d => d.split(/\s+/)[0].toLowerCase();
+
 const blocksData = policy => policy.split(',').some(p => {
-  const dirs = new Map();
-  for (const d of p.split(';')) {
-    const [name, ...src] = d.trim().toLowerCase().split(/\s+/);
-    if (name && !dirs.has(name)) dirs.set(name, src);
-  }
-  const src = dirs.get('img-src') || dirs.get('default-src');
-  return !!src && !src.includes('data:');
+  const dirs = parse(p);
+  const d = dirs.find(x => dirName(x) === 'img-src') || dirs.find(x => dirName(x) === 'default-src');
+  return !!d && !d.toLowerCase().split(/\s+/).includes('data:');
 });
+
+const withData = d => d.split(/\s+/).filter(t => t.toLowerCase() !== "'none'").concat('data:').join(' ');
+
+const allowData = header => header.split(',').map(p => {
+  if (!blocksData(p)) return p.trim();
+  const dirs = parse(p);
+  const i = dirs.findIndex(x => dirName(x) === 'img-src');
+  if (i >= 0) dirs[i] = withData(dirs[i]);
+  else dirs.push(withData('img-src' + dirs.find(x => dirName(x) === 'default-src').slice('default-src'.length)));
+  return dirs.join('; ');
+}).join(', ');
+
+const ruleIdFor = s => {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.codePointAt(0)) >>> 0;
+  return (h % 900000) + 1;
+};
+
+async function syncRule(origin, header) {
+  const key = 'rule:' + origin;
+  const id = ruleIdFor(origin);
+  const stored = (await chrome.storage.session.get(key))[key];
+  if (!header || /'nonce-/i.test(header)) {
+    if (stored) {
+      await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] });
+      await chrome.storage.session.remove(key);
+    }
+    return false; // blocked, nothing to do
+  }
+  const patched = allowData(header);
+  if (stored === patched) return true; // this response already got the patched policy
+  await chrome.declarativeNetRequest.updateSessionRules({
+    removeRuleIds: [id],
+    addRules: [{
+      id,
+      priority: 1,
+      action: { type: 'modifyHeaders', responseHeaders: [{ header: 'content-security-policy', operation: 'set', value: patched }] },
+      condition: { urlFilter: '|' + origin + '/', resourceTypes: ['main_frame', 'sub_frame'] }
+    }]
+  });
+  await chrome.storage.session.set({ [key]: patched });
+  return false; // takes effect on the next load
+}
 
 chrome.webRequest.onHeadersReceived.addListener(d => {
   if (d.tabId < 0) return;
-  const blocked = (d.responseHeaders || [])
-    .some(h => h.name.toLowerCase() === 'content-security-policy' && blocksData(h.value || ''));
-  chrome.storage.session.set({ ['csp:' + d.tabId + ':' + d.frameId]: blocked });
+  const header = (d.responseHeaders || [])
+    .filter(h => h.name.toLowerCase() === 'content-security-policy')
+    .map(h => h.value || '').join(', ');
+  const tabKey = 'csp:' + d.tabId + ':' + d.frameId;
+  if (!blocksData(header)) { chrome.storage.session.set({ [tabKey]: false }); return; }
+  syncRule(new URL(d.url).origin, header)
+    .catch(() => false)
+    .then(ok => chrome.storage.session.set({ [tabKey]: !ok }));
 }, { urls: ['http://*/*', 'https://*/*'], types: ['main_frame', 'sub_frame'] }, ['responseHeaders']);
 
 chrome.tabs.onRemoved.addListener(tabId => {
@@ -66,37 +115,5 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const meta = msg.meta || [];
   const key = 'csp:' + sender.tab?.id + ':' + sender.frameId;
   chrome.storage.session.get(key).then(v => sendResponse({ blocked: !!v[key] || meta.some(blocksData) }));
-  return true;
-});
-
-// Session-only redirect rules used by the CSP fallback: requests for a site's own
-// icon URL get answered with our grayscale image. No page headers are modified.
-const ruleIdFor = url => {
-  let h = 0;
-  for (const c of url) h = (h * 31 + c.codePointAt(0)) >>> 0;
-  return (h % 900000) + 1;
-};
-
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (!msg || msg.type !== 'iconRule') return;
-  (async () => {
-    try {
-      const id = ruleIdFor(msg.url);
-      const addRules = msg.dataUrl ? [{
-        id,
-        priority: 1,
-        action: { type: 'redirect', redirect: { url: msg.dataUrl } },
-        condition: {
-          urlFilter: '|' + msg.url + '|',
-          resourceTypes: ['image', 'other'],
-          excludedInitiatorDomains: [chrome.runtime.id]
-        }
-      }] : [];
-      await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id], addRules });
-      sendResponse({ ok: true });
-    } catch (e) {
-      sendResponse({ ok: false });
-    }
-  })();
   return true;
 });
